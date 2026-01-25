@@ -14,6 +14,12 @@ class RoninSettingsState : PersistentStateComponent<RoninSettingsState> {
     
     var model: String = "gpt-4o"
     var provider: String = "OpenAI"
+    var allowedTools: String = "git, podman, kubectl, argocd, aws, bazel"
+    var coreWorkflow: String = """
+        1. **PLAN**: Analyze request.
+        2. **EXECUTE**: Return the JSON with commands and edits.
+        3. **VERIFY**: Check if the goal is achieved. Only run verification commands (test/build) if necessary to validate code changes. Do NOT verify simple info queries (e.g. pwd, ls).
+    """.trimIndent()
 
     // Legacy fields for migration
     var openaiApiKey: String? = null
@@ -30,6 +36,8 @@ class RoninSettingsState : PersistentStateComponent<RoninSettingsState> {
         this.ollamaBaseUrl = state.ollamaBaseUrl
         this.model = state.model
         this.provider = state.provider
+        this.allowedTools = state.allowedTools
+        this.coreWorkflow = state.coreWorkflow
 
         // Migrate keys to PasswordSafe if found in XML
         migrateKey("openaiApiKey", state.openaiApiKey)

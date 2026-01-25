@@ -59,47 +59,143 @@ The codebase is organized into clear functional components:
 *   **`src/main/kotlin/com/ronin/ui`**: Manages the Tool Window, Chat UI, and message history.
 *   **`src/main/kotlin/com/ronin/service`**: The agent's core logic:
     *   **`LLMService`**: Communicates with AI providers (OpenAI, etc.).
-    *   **`ContextService`**: Reads the active file and project structure to give the agent context.
+    *   **`RoninConfigService`**: Manages project context, rules, and structure.
     *   **`EditService`**: Safely modifies files in the editor using the IntelliJ SDK.
-    *   **`ResponseParser`**: Detects file update commands in the AI's response.
-*   **`src/main/kotlin/com/ronin/settings`**: Manages user configuration (API keys, models).
 
-## 🧠 Chat Architecture
+## 🧠 Agentic Architecture: The 2-Phase Loop
 
-How Ronin processes and acts on your requests:
+Ronin has evolved from a simple chatbot into a **2-Phase Agent** that thinks before it acts.
+
+### Phase 1: Planning (Architect)
+When you send a request, Ronin first acts as a Senior Architect. It analyzes your request and the codebase to generate a **Plain Text Implementation Plan**.
+- **Goal**: Create a step-by-step guide.
+- **Output**: A clear plan presented to the user.
+- **Action**: You must read the plan and type "Proceed" (or ask for changes).
+
+### Phase 2: Execution (Builder / Vibe Coding)
+Once a plan is active, Ronin switches to "Builder Mode". It executes the plan step-by-step using a strict **Thought-Action Protocol (XML)**.
+
+- **Thinking (`<analysis>`)**: The agent reflects on the task, analyzes the file, and plans the specific edit.
+- **Action (`<execute>`)**: The agent performs a single, atomic action (e.g., `write_code`, `run_command`).
+- **Loop**: `Analyze` -> `Execute` -> `Verify` -> `Next`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    
+    Idle --> Planning : User Request
+    
+    state Planning {
+        [*] --> Analyzing
+        Analyzing --> PlanProposal : Generate Plan
+        PlanProposal --> Analyzing : User Feedback
+        PlanProposal --> Execution : User Approves ("Proceed")
+    }
+    
+    state Execution {
+        [*] --> Thinking
+        Thinking --> ToolExecution : XML <execute>
+        ToolExecution --> ResultAnalysis : Feedback (stdout/success)
+        ResultAnalysis --> Thinking : Next Step
+        ResultAnalysis --> Finished : "task_complete"
+    }
+    
+    Finished --> Idle : Done
+```
+
+### The Execution Loop (Detailed)
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant UI as Chat Tool Window
-    participant Context as ContextService
-    participant Service as LLM Service
-    participant Provider as LLM Provider
+    participant UI as Chat UI
+    participant Agent as AgentSession
+    participant LLM as LLMService
     participant Parser as ResponseParser
-    participant Edit as EditService
+    participant Tools as Edit/Terminal
 
-    User->>UI: Sends Message
-    UI->>Context: getActiveFile() & getProjectStructure()
-    Context-->>UI: Returns Context
-    UI->>Service: sendMessage(prompt + context + history)
-    Service->>Provider: HTTP Request
-    Provider-->>Service: JSON Response ("... [UPDATED_FILE] ...")
-    Service-->>UI: Returns Full Text
-    UI->>Parser: parseAndApply(response)
-    alt Contains Editing Command
-        Parser->>Edit: replaceFileContent()
-        Edit-->>UI: File Updated in Editor
+    User->>UI: "Refactor this class"
+    UI->>LLM: Mode: PLANNING
+    LLM-->>UI: "Here is the plan: 1. Rename..."
+    
+    User->>UI: "Proceed"
+    UI->>Agent: Plan Locked
+    
+    loop Execution Cycle
+        UI->>LLM: Mode: EXECUTION (History + Current Plan)
+        LLM-->>UI: XML Response (<analysis>...</analysis><execute>...</execute>)
+        
+        UI->>Parser: Parse XML (Extract Thought & Action)
+        
+        alt Write Code
+            Parser->>Tools: EditService.applyEdits()
+        else Run Command
+            Parser->>Tools: TerminalService.runCommand()
+        end
+        
+        Tools-->>UI: Result ("Success" / Output)
+        UI->>LLM: Feedback Loop (Auto-send Result)
     end
-    UI-->>User: Displays Response
+    
+    LLM-->>UI: XML Action <task_complete>
+    UI->>Agent: Clear Plan
+    UI-->>User: "Task Finished"
 ```
+
+## ⚙️ System Components
+
+### Services (`src/main/kotlin/com/ronin/service`)
+The nervous system of the agent.
+
+| Service | Responsibility |
+| :--- | :--- |
+| **`AgentSessionService`** | **State Manager**. Tracks the active session and history. Delegates persistence to `ChatStorageService`. |
+| **`LLMService`** | **The Brain**. Manages API connections. Enforces **Protocol v3 (XML/CoT)** for robust "System 2" thinking. |
+| **`ResponseParser`** | **The Ear**. Parses XML Protocol. Separates `<analysis>` (Thinking, visible in UI as thoughts) from `<execute>` (Actions). |
+| **`RoninConfigService`** | **The Context**. Reads `.roninrules`, `ronin.yaml`, and project structure to ground the agent in reality. |
+| **`EditService`** | **The Hands**. Safely modifies files using `WriteCommandAction`. Supports fuzzy matching and atomic undo. |
+| **`TerminalService`** | **The Legs**. Executes shell commands, capturing stdout/stderr to feed back into the reasoning loop. |
+
+### Actions (`src/main/kotlin/com/ronin/actions`)
+Context-menu triggers that bootstrap the agent with specific intents.
+
+*   **`ExplainCodeAction`**: Sends selected code with "Explain this..." prompt.
+*   **`FixCodeAction`**: Sends selected code with "Fix bugs..." prompt.
+*   **`ImproveCodeAction`**: Asks for refactoring ideas.
+*   **`GenerateUnitTestsAction`**: Asks for test coverage.
+*   **`BaseRoninAction`**: Abstract base that handles the pipeline: `Open Window -> Gather Context -> Send -> Apply`.
 
 ## 🗺️ Roadmap
 
-- [x] **Core Architecture**: Plugin skeleton and basic tool window.
-- [x] **Chat Interface**: Functional chat UI with history.
-- [x] **OpenAI Integration**: Live connection to OpenAI API.
-- [x] **Context Awareness**: Agent "sees" your active file and folder structure.
-- [x] **File Modification**: Agent can write code directly to your files.
-- [ ] **Multi-Provider Support**: Full implementation for Anthropic, Gemini, Ollama (currently mocked).
-- [ ] **Chat Persistence**: Save chat history across IDE restarts.
-- [ ] **Multimodal Support**: Real image attachment processing.
+### ✅ Architecture & Core
+- [x] **Protocol v3**: Thought-Action architecture (XML/CoT) for "System 2" reasoning.
+- [x] **Agentic Loop**: Autonomous `Command -> Execute -> Analyze` cycle.
+- [x] **Context Awareness**: `RoninConfigService` for rule-based (`.roninrules`) and structural context.
+- [x] **Persistence**: `ChatStorageService` saves history across IDE restarts (JSON-based).
+- [x] **Robust File Ops**: "Safe Overwrite" checks and Fuzzy Search/Replace.
+
+### ✅ LLM Capabilities
+- [x] **OpenAI Integration**: Full support for `gpt-4o`, `gpt-4-turbo`.
+- [x] **Advanced Reasoning**: Optimized support for `o1-preview` (Protocol v3 handles the thinking loop).
+- [x] **Reliability**: Switch from JSON Schema (fragile) to XML Protocol (robust) to avoid strict-mode failures.
+
+### ✅ Developer Experience (DX)
+- [x] **Integrated Terminal**: Execute shell commands directly from chat options.
+- [x] **Responsive UI**: Fluid message bubbles (`GridBagLayout`) that respect window size.
+- [x] **Smart Logs**: Command outputs are summarized in UI to prevent clutter, but sent fully to LLM.
+- [x] **Slash Commands**: Use `/init` to boostrap `ronin.yaml` or custom commands from `ronin/commands/*.md`.
+- [ ] **Multimodal**: Drag-and-drop image support for visual debugging.
+
+## ⚡ Slash Commands
+
+Ronin supports commands to trigger specific workflows:
+
+### Built-in
+*   **`/init`**: Automatically scans your Bazel workspace using `bazel query` and generates the `ronin.yaml` registry file.
+
+### Custom
+You can define your own commands by creating Markdown files in `ronin/commands/`:
+1.  Create `ronin/commands/refactor.md`.
+2.  Write your prompt template in the file.
+3.  Type `/refactor` in the chat.
+4.  Ronin effectively "pastes" that file content as your prompt.
