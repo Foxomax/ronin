@@ -3,15 +3,18 @@ package com.ronin.actions
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
-import com.intellij.openapi.components.service
 import com.intellij.openapi.wm.ToolWindowManager
-import com.ronin.service.LLMService
-import com.ronin.ui.ChatToolWindowFactory
-import com.ronin.MyBundle
+import com.ronin.ui.chat.ChatToolWindow
 
-
+/**
+ * Base class for Ronin actions that work with selected code
+ * Refactored to use the new ChatToolWindow API
+ */
 abstract class BaseRoninAction : AnAction() {
 
+    /**
+     * Generates the prompt based on the selected code
+     */
     abstract fun getPrompt(code: String): String
 
     override fun update(e: AnActionEvent) {
@@ -30,32 +33,12 @@ abstract class BaseRoninAction : AnAction() {
         // 1. Open the Tool Window if not open
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Ronin Chat")
         toolWindow?.show {
-            // 2. Append User's "pseudo-command" to chat
-            val chatWindow = ChatToolWindowFactory.ChatToolWindow.getInstance(project)
-            chatWindow?.appendMessage(MyBundle.message("toolwindow.you"), prompt)
-
-            // 3. Call Service
-            com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread {
-                val llmService = project.service<LLMService>()
-                val configService = project.service<com.ronin.service.RoninConfigService>()
-
-                // Gather Context
-                val activeFile = configService.getActiveFileContent()
-                val projectStructure = configService.getProjectStructure()
-
-                val contextBuilder = StringBuilder()
-                if (activeFile != null) {
-                    contextBuilder.append("Active File Content:\n```\n$activeFile\n```\n\n")
-                }
-                contextBuilder.append(projectStructure)
-
-                val response = llmService.sendMessage(prompt, contextBuilder.toString(), emptyList())
-                
-                // Parse and apply changes (side-effect)
-                com.ronin.service.ResponseParser.parseAndApply(response, project)
-                
-                // 4. Append Response
-                chatWindow?.appendMessage(MyBundle.message("toolwindow.ronin"), response)
+            // 2. Get ChatToolWindow instance and send message
+            val chatWindow = ChatToolWindow.getInstance(project)
+            if (chatWindow != null) {
+                // Use the new API to send the message
+                // This will handle everything: adding to UI, calling LLM, processing response, etc.
+                chatWindow.sendMessageProgrammatically(prompt)
             }
         }
     }
