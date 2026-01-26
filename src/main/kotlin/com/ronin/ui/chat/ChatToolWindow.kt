@@ -279,7 +279,7 @@ class ChatToolWindow(private val project: Project) {
     fun updateModelList() {
         val settings = RoninSettingsState.instance
         val provider = settings.provider
-        val currentModel = settings.model
+        val currentModel = settings.activeStance
         
         controlBar.setModelsLoading(true)
         
